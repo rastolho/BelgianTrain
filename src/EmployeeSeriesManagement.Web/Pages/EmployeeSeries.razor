@@ -1,0 +1,163 @@
+@page "/employee-series"
+@inject EmployeeApiClient ApiClient
+
+<PageTitle>Employee Series</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-6">
+    <MudText Typo="Typo.h4" GutterBottom="true">Employee Series</MudText>
+    <MudText Typo="Typo.body1" Class="mb-4">
+        List the series an employee is assigned to that overlap a date range.
+    </MudText>
+
+    <MudPaper Class="pa-4 mb-4" Elevation="1">
+        <MudGrid>
+            <MudItem xs="12" sm="6" md="3">
+                <MudNumericField T="int?"
+                                 Label="Employee external id"
+                                 @bind-Value="_employeeIdInput"
+                                 Min="1"
+                                 Variant="Variant.Outlined" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <MudDatePicker Label="Start date"
+                               Date="_startDate"
+                               DateChanged="OnStartDateChanged"
+                               Variant="Variant.Outlined" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <MudDatePicker Label="End date"
+                               Date="_endDate"
+                               DateChanged="OnEndDateChanged"
+                               Variant="Variant.Outlined" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="3">
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           OnClick="SearchAsync"
+                           Disabled="@(!CanSearch)">
+                    Find series
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    @if (_loading)
+    {
+        <MudProgressCircular Indeterminate="true" Size="Size.Small" />
+        <MudText Typo="Typo.body2" Class="d-inline ms-2">Loading series…</MudText>
+    }
+    else if (!string.IsNullOrEmpty(_errorMessage))
+    {
+        <MudAlert Severity="Severity.Error" Class="mb-3">@_errorMessage</MudAlert>
+    }
+    else if (_notFound)
+    {
+        <MudAlert Severity="Severity.Warning" Class="mb-3">
+            No employee with external id <strong>@_lastQuery?.EmployeeId</strong> was found.
+        </MudAlert>
+    }
+    else if (_series.Count > 0 && _lastQuery is not null)
+    {
+        <MudText Typo="Typo.subtitle1" Class="mb-2">
+            @_series.Count series for employee <strong>#@_lastQuery.EmployeeId</strong>
+            between <strong>@_lastQuery.Start.ToString("yyyy-MM-dd")</strong>
+            and <strong>@_lastQuery.End.ToString("yyyy-MM-dd")</strong>
+        </MudText>
+        <MudTable Items="@_series" Hover="true" Striped="true" Dense="true" Elevation="1">
+            <HeaderContent>
+                <MudTh>Code</MudTh>
+                <MudTh>External id</MudTh>
+                <MudTh>Name</MudTh>
+                <MudTh>Series window</MudTh>
+                <MudTh>Assigned window</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@context.Code</MudTd>
+                <MudTd>@context.ExternalId</MudTd>
+                <MudTd>@context.Name</MudTd>
+                <MudTd>@context.SeriesStartDate.ToString("yyyy-MM-dd") → @context.SeriesEndDate.ToString("yyyy-MM-dd")</MudTd>
+                <MudTd>@context.AssignmentStartDate.ToString("yyyy-MM-dd") → @context.AssignmentEndDate.ToString("yyyy-MM-dd")</MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+    else if (_hasSearched && _lastQuery is not null)
+    {
+        <MudText Typo="Typo.body2" Color="Color.Secondary">
+            Employee <strong>#@_lastQuery.EmployeeId</strong> has no series overlapping that period.
+        </MudText>
+    }
+    else
+    {
+        <MudText Typo="Typo.body2" Color="Color.Secondary">
+            Enter an employee id and a date range, then click <em>Find series</em>.
+        </MudText>
+    }
+</MudContainer>
+
+@code {
+    private int? _employeeIdInput;
+    private DateTime? _startDate = new DateTime(DateTime.Today.Year, 1, 1);
+    private DateTime? _endDate = new DateTime(DateTime.Today.Year, 12, 31);
+    private readonly List<SeriesDto> _series = [];
+    private Query? _lastQuery;
+    private bool _loading;
+    private bool _notFound;
+    private bool _hasSearched;
+    private string? _errorMessage;
+
+    private bool CanSearch =>
+        !_loading
+        && _employeeIdInput is not null
+        && _startDate is not null
+        && _endDate is not null
+        && _endDate >= _startDate;
+
+    private void OnStartDateChanged(DateTime? value) => _startDate = value;
+    private void OnEndDateChanged(DateTime? value) => _endDate = value;
+
+    private async Task SearchAsync()
+    {
+        if (!CanSearch)
+        {
+            return;
+        }
+
+        var employeeId = _employeeIdInput!.Value;
+        var start = DateOnly.FromDateTime(_startDate!.Value);
+        var end = DateOnly.FromDateTime(_endDate!.Value);
+
+        _series.Clear();
+        _errorMessage = null;
+        _notFound = false;
+        _hasSearched = true;
+        _lastQuery = new Query(employeeId, start, end);
+        _loading = true;
+
+        try
+        {
+            var result = await ApiClient.GetEmployeeSeriesAsync(employeeId, start, end);
+            switch (result.Status)
+            {
+                case EmployeeSeriesStatus.NotFound:
+                    _notFound = true;
+                    break;
+                case EmployeeSeriesStatus.BadRequest:
+                    _errorMessage = result.ErrorMessage ?? "Invalid request.";
+                    break;
+                case EmployeeSeriesStatus.Ok:
+                    _series.AddRange(result.Series);
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Could not load series. Ensure the API is running at the configured ApiBaseUrl. ({ex.Message})";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private sealed record Query(int EmployeeId, DateOnly Start, DateOnly End);
+}

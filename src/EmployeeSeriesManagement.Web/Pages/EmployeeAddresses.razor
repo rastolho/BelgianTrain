@@ -1,0 +1,141 @@
+@page "/employee-addresses"
+@inject EmployeeApiClient ApiClient
+
+<PageTitle>Employee Addresses</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-6">
+    <MudText Typo="Typo.h4" GutterBottom="true">Employee Addresses</MudText>
+    <MudText Typo="Typo.body1" Class="mb-4">
+        Look up every address (work and personal) linked to an employee by their external id.
+    </MudText>
+
+    <MudPaper Class="pa-4 mb-4" Elevation="1">
+        <MudGrid>
+            <MudItem xs="12" sm="6" md="4">
+                <MudNumericField T="int?"
+                                 Label="Employee external id"
+                                 @bind-Value="_employeeIdInput"
+                                 Min="1"
+                                 HideSpinButtons="false"
+                                 Variant="Variant.Outlined" />
+            </MudItem>
+            <MudItem xs="12" sm="6" md="4">
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           OnClick="SearchAsync"
+                           Disabled="@(_loading || _employeeIdInput is null)">
+                    Find addresses
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    @if (_loading)
+    {
+        <MudProgressCircular Indeterminate="true" Size="Size.Small" />
+        <MudText Typo="Typo.body2" Class="d-inline ms-2">Loading addresses…</MudText>
+    }
+    else if (!string.IsNullOrEmpty(_errorMessage))
+    {
+        <MudAlert Severity="Severity.Error" Class="mb-3">@_errorMessage</MudAlert>
+    }
+    else if (_notFound)
+    {
+        <MudAlert Severity="Severity.Warning" Class="mb-3">
+            No employee with external id <strong>@_lastQueriedId</strong> was found.
+        </MudAlert>
+    }
+    else if (_addresses.Count > 0)
+    {
+        <MudText Typo="Typo.subtitle1" Class="mb-2">
+            Addresses for employee <strong>#@_lastQueriedId</strong> (@_addresses.Count total)
+        </MudText>
+        <MudTable Items="@_addresses" Hover="true" Striped="true" Dense="true" Elevation="1">
+            <HeaderContent>
+                <MudTh>Type</MudTh>
+                <MudTh>Street</MudTh>
+                <MudTh>Number</MudTh>
+                <MudTh>City</MudTh>
+                <MudTh>Zip</MudTh>
+                <MudTh>Country</MudTh>
+                <MudTh>Mailbox</MudTh>
+                <MudTh>Building</MudTh>
+                <MudTh>Floor</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>
+                    <MudChip T="string"
+                             Size="Size.Small"
+                             Color="@(context.AddressType == "Work" ? Color.Info : Color.Success)">
+                        @context.AddressType
+                    </MudChip>
+                </MudTd>
+                <MudTd>@context.Street</MudTd>
+                <MudTd>@context.Number</MudTd>
+                <MudTd>@context.City</MudTd>
+                <MudTd>@context.ZipCode</MudTd>
+                <MudTd>@context.Country</MudTd>
+                <MudTd>@(context.MailboxNumber ?? "—")</MudTd>
+                <MudTd>@(context.Building ?? "—")</MudTd>
+                <MudTd>@(context.Floor ?? "—")</MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+    else if (_hasSearched)
+    {
+        <MudText Typo="Typo.body2" Color="Color.Secondary">
+            Employee <strong>#@_lastQueriedId</strong> has no addresses on file.
+        </MudText>
+    }
+    else
+    {
+        <MudText Typo="Typo.body2" Color="Color.Secondary">
+            Enter an employee external id and click <em>Find addresses</em> to begin.
+        </MudText>
+    }
+</MudContainer>
+
+@code {
+    private int? _employeeIdInput;
+    private int? _lastQueriedId;
+    private readonly List<AddressDto> _addresses = [];
+    private bool _loading;
+    private bool _notFound;
+    private bool _hasSearched;
+    private string? _errorMessage;
+
+    private async Task SearchAsync()
+    {
+        if (_employeeIdInput is null)
+        {
+            return;
+        }
+
+        _addresses.Clear();
+        _errorMessage = null;
+        _notFound = false;
+        _hasSearched = true;
+        _lastQueriedId = _employeeIdInput;
+        _loading = true;
+
+        try
+        {
+            var result = await ApiClient.GetEmployeeAddressesAsync(_employeeIdInput.Value);
+            if (!result.Found)
+            {
+                _notFound = true;
+                return;
+            }
+
+            _addresses.AddRange(result.Addresses);
+        }
+        catch (Exception ex)
+        {
+            _errorMessage = $"Could not load addresses. Ensure the API is running at the configured ApiBaseUrl. ({ex.Message})";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+}

@@ -1,0 +1,37 @@
+# Frontend (Blazor WASM via nginx) + Backend (ASP.NET Core API).
+#
+# Standalone (requires db + otel-collector running and reachable on esm-net):
+#   docker network inspect esm-net >/dev/null 2>&1 || docker network create esm-net
+#   docker compose -f docker/db/docker-compose.yml up -d
+#   docker compose -f docker/honeycomb/docker-compose.yml up -d
+#   docker compose -f docker/app/docker-compose.yml up --build
+#
+# Easier: from repo root, `docker compose up --build` runs everything via include.
+
+services:
+  api:
+    build:
+      context: ../..
+      dockerfile: src/EmployeeSeriesManagement.Api/Dockerfile
+    container_name: esm-api
+    environment:
+      ASPNETCORE_URLS: http://+:8080
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__DefaultConnection: "Server=db,1433;Database=EmployeeSeries;User Id=sa;Password=${MSSQL_SA_PASSWORD};TrustServerCertificate=true;"
+      OpenTelemetry__OtlpEndpoint: "http://otel-collector:4317"
+    networks:
+      - esm-net
+
+  web:
+    build:
+      context: ../..
+      dockerfile: src/EmployeeSeriesManagement.Web/Dockerfile
+    container_name: esm-web
+    ports:
+      - "8080:80"
+    networks:
+      - esm-net
+
+networks:
+  esm-net:
+    name: esm-net

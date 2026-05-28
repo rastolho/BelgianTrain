@@ -1,0 +1,166 @@
+@page "/admin/assign-series"
+@inject EmployeeApiClient ApiClient
+
+<PageTitle>Assign Series (internal)</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Medium" Class="mt-6">
+    <MudAlert Severity="Severity.Warning" Class="mb-4" Icon="@Icons.Material.Filled.Lock">
+        <strong>Internal use only.</strong> This page calls the back-office endpoint that creates a new
+        employee–series assignment. Do not expose it to end users.
+    </MudAlert>
+
+    <MudText Typo="Typo.h4" GutterBottom="true">Assign series to employee</MudText>
+    <MudText Typo="Typo.body1" Class="mb-4">
+        Stages a new <code>EmployeeSeries</code> row for the given employee and series code over the chosen window.
+    </MudText>
+
+    <MudPaper Class="pa-4 mb-4" Elevation="1">
+        <MudGrid>
+            <MudItem xs="12" sm="6">
+                <MudNumericField T="int?"
+                                 Label="Employee external id"
+                                 @bind-Value="_employeeIdInput"
+                                 Min="1"
+                                 Variant="Variant.Outlined" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudNumericField T="int?"
+                                 Label="Series code"
+                                 @bind-Value="_seriesCodeInput"
+                                 Min="1"
+                                 Variant="Variant.Outlined" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudDatePicker Label="Start date"
+                               Date="_startDate"
+                               DateChanged="value => _startDate = value"
+                               Variant="Variant.Outlined" />
+            </MudItem>
+            <MudItem xs="12" sm="6">
+                <MudDatePicker Label="End date"
+                               Date="_endDate"
+                               DateChanged="value => _endDate = value"
+                               Variant="Variant.Outlined" />
+            </MudItem>
+            <MudItem xs="12">
+                <MudButton Variant="Variant.Filled"
+                           Color="Color.Primary"
+                           OnClick="SubmitAsync"
+                           Disabled="@(!CanSubmit)">
+                    Assign series
+                </MudButton>
+            </MudItem>
+        </MudGrid>
+    </MudPaper>
+
+    @if (_submitting)
+    {
+        <MudProgressCircular Indeterminate="true" Size="Size.Small" />
+        <MudText Typo="Typo.body2" Class="d-inline ms-2">Saving assignment…</MudText>
+    }
+    else if (!string.IsNullOrEmpty(_errorMessage))
+    {
+        <MudAlert Severity="@_errorSeverity" Class="mb-3">@_errorMessage</MudAlert>
+    }
+
+    @if (_lastCreated is not null)
+    {
+        <MudAlert Severity="Severity.Success" Class="mb-3">
+            Assigned series <strong>#@_lastCreated.Code (@_lastCreated.Name)</strong>
+            to employee <strong>#@_lastEmployeeId</strong>
+            from <strong>@_lastCreated.AssignmentStartDate.ToString("yyyy-MM-dd")</strong>
+            to <strong>@_lastCreated.AssignmentEndDate.ToString("yyyy-MM-dd")</strong>.
+        </MudAlert>
+
+        <MudTable Items="@(new[] { _lastCreated })" Hover="true" Dense="true" Elevation="1">
+            <HeaderContent>
+                <MudTh>Code</MudTh>
+                <MudTh>External id</MudTh>
+                <MudTh>Name</MudTh>
+                <MudTh>Series window</MudTh>
+                <MudTh>Assigned window</MudTh>
+            </HeaderContent>
+            <RowTemplate>
+                <MudTd>@context.Code</MudTd>
+                <MudTd>@context.ExternalId</MudTd>
+                <MudTd>@context.Name</MudTd>
+                <MudTd>@context.SeriesStartDate.ToString("yyyy-MM-dd") → @context.SeriesEndDate.ToString("yyyy-MM-dd")</MudTd>
+                <MudTd>@context.AssignmentStartDate.ToString("yyyy-MM-dd") → @context.AssignmentEndDate.ToString("yyyy-MM-dd")</MudTd>
+            </RowTemplate>
+        </MudTable>
+    }
+</MudContainer>
+
+@code {
+    private int? _employeeIdInput;
+    private int? _seriesCodeInput;
+    private DateTime? _startDate = DateTime.Today;
+    private DateTime? _endDate = DateTime.Today.AddMonths(6);
+    private bool _submitting;
+    private string? _errorMessage;
+    private Severity _errorSeverity = Severity.Error;
+    private SeriesDto? _lastCreated;
+    private int? _lastEmployeeId;
+
+    private bool CanSubmit =>
+        !_submitting
+        && _employeeIdInput is not null
+        && _seriesCodeInput is not null
+        && _startDate is not null
+        && _endDate is not null
+        && _endDate >= _startDate;
+
+    private async Task SubmitAsync()
+    {
+        if (!CanSubmit)
+        {
+            return;
+        }
+
+        var employeeId = _employeeIdInput!.Value;
+        var seriesCode = _seriesCodeInput!.Value;
+        var start = DateOnly.FromDateTime(_startDate!.Value);
+        var end = DateOnly.FromDateTime(_endDate!.Value);
+
+        _submitting = true;
+        _errorMessage = null;
+        _lastCreated = null;
+
+        try
+        {
+            var result = await ApiClient.AssignSeriesAsync(employeeId, seriesCode, start, end);
+            switch (result.Status)
+            {
+                case AssignSeriesStatus.Created:
+                    _lastCreated = result.Created;
+                    _lastEmployeeId = employeeId;
+                    break;
+                case AssignSeriesStatus.NotFound:
+                    _errorSeverity = Severity.Warning;
+                    _errorMessage = result.ErrorMessage ?? "Employee or series not found.";
+                    break;
+                case AssignSeriesStatus.Conflict:
+                    _errorSeverity = Severity.Warning;
+                    _errorMessage = result.ErrorMessage ?? "An assignment with the same employee, series, and start date already exists.";
+                    break;
+                case AssignSeriesStatus.BadRequest:
+                    _errorSeverity = Severity.Error;
+                    _errorMessage = result.ErrorMessage ?? "Invalid request.";
+                    break;
+                default:
+                    _errorSeverity = Severity.Error;
+                    _errorMessage = result.ErrorMessage ?? "Unexpected error.";
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            _errorSeverity = Severity.Error;
+            _errorMessage = $"Could not save assignment. Ensure the API is running at the configured ApiBaseUrl. ({ex.Message})";
+        }
+        finally
+        {
+            _submitting = false;
+        }
+    }
+}

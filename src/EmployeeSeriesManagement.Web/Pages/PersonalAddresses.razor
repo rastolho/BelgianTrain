@@ -1,0 +1,140 @@
+@page "/"
+@page "/personal-addresses"
+@inject EmployeeApiClient ApiClient
+
+<PageTitle>Personal Addresses by Work City</PageTitle>
+
+<MudContainer MaxWidth="MaxWidth.Large" Class="mt-6">
+    <MudText Typo="Typo.h4" GutterBottom="true">Employee Personal Addresses</MudText>
+    <MudText Typo="Typo.body1" Class="mb-4">
+        Select a work city to list each employee's personal address (SNCB evaluation exercise).
+    </MudText>
+
+    @if (_loadingCities)
+    {
+        <MudProgressCircular Indeterminate="true" Size="Size.Small" />
+        <MudText Typo="Typo.body2" Class="d-inline ms-2">Loading work cities…</MudText>
+    }
+    else
+    {
+        @if (!string.IsNullOrEmpty(_cityLoadError))
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-3">@_cityLoadError</MudAlert>
+        }
+
+        <MudSelect T="string"
+                   Label="Work city"
+                   Value="_selectedCity"
+                   ValueChanged="OnCityChanged"
+                   Disabled="@(_loadingCities || _loadingAddresses)"
+                   Variant="Variant.Outlined"
+                   Class="mb-4"
+                   Placeholder="-- Select a city --">
+            @foreach (var city in _workCities)
+            {
+                <MudSelectItem Value="@city">@city</MudSelectItem>
+            }
+        </MudSelect>
+
+        @if (!string.IsNullOrEmpty(_addressLoadError))
+        {
+            <MudAlert Severity="Severity.Error" Class="mb-3">@_addressLoadError</MudAlert>
+        }
+
+        @if (_loadingAddresses)
+        {
+            <MudProgressCircular Indeterminate="true" Size="Size.Small" />
+            <MudText Typo="Typo.body2" Class="d-inline ms-2">Loading personal addresses…</MudText>
+        }
+        else if (string.IsNullOrWhiteSpace(_selectedCity))
+        {
+            <MudText Typo="Typo.body2" Color="Color.Secondary">Select a work city from the dropdown to display employee personal addresses.</MudText>
+        }
+        else if (_addresses.Count == 0)
+        {
+            <MudText Typo="Typo.body2" Color="Color.Secondary">
+                No employees have a work address in <strong>@_selectedCity</strong>. Try another city.
+            </MudText>
+        }
+        else
+        {
+            <MudTable Items="@_addresses" Hover="true" Striped="true" Dense="true" Elevation="1">
+                <HeaderContent>
+                    <MudTh>Employee</MudTh>
+                    <MudTh>Street</MudTh>
+                    <MudTh>Number</MudTh>
+                    <MudTh>City</MudTh>
+                    <MudTh>Zip</MudTh>
+                    <MudTh>Country</MudTh>
+                </HeaderContent>
+                <RowTemplate>
+                    <MudTd>@context.FirstName @context.LastName (#@context.EmployeeExternalId)</MudTd>
+                    <MudTd>@context.PersonalAddress.Street</MudTd>
+                    <MudTd>@context.PersonalAddress.Number</MudTd>
+                    <MudTd>@context.PersonalAddress.City</MudTd>
+                    <MudTd>@context.PersonalAddress.ZipCode</MudTd>
+                    <MudTd>@context.PersonalAddress.Country</MudTd>
+                </RowTemplate>
+            </MudTable>
+        }
+    }
+</MudContainer>
+
+@code {
+    private readonly List<string> _workCities = [];
+    private readonly List<EmployeePersonalAddressDto> _addresses = [];
+    private string _selectedCity = string.Empty;
+    private bool _loadingCities = true;
+    private bool _loadingAddresses;
+    private string? _cityLoadError;
+    private string? _addressLoadError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            _workCities.Clear();
+            _workCities.AddRange(await ApiClient.GetWorkCitiesAsync());
+        }
+        catch (Exception ex)
+        {
+            _cityLoadError = $"Could not load work cities. Ensure the API is running at the configured ApiBaseUrl. ({ex.Message})";
+        }
+        finally
+        {
+            _loadingCities = false;
+        }
+    }
+
+    private async Task OnCityChanged(string city)
+    {
+        _selectedCity = city;
+        await LoadAddressesAsync();
+    }
+
+    private async Task LoadAddressesAsync()
+    {
+        _addresses.Clear();
+        _addressLoadError = null;
+
+        if (string.IsNullOrWhiteSpace(_selectedCity))
+        {
+            return;
+        }
+
+        _loadingAddresses = true;
+        try
+        {
+            var results = await ApiClient.GetPersonalAddressesByWorkCityAsync(_selectedCity);
+            _addresses.AddRange(results);
+        }
+        catch (Exception ex)
+        {
+            _addressLoadError = $"Could not load personal addresses. Ensure the API is running at the configured ApiBaseUrl. ({ex.Message})";
+        }
+        finally
+        {
+            _loadingAddresses = false;
+        }
+    }
+}

@@ -1,0 +1,30 @@
+# Root compose — runs the entire stack with one command.
+#
+#   docker compose up --build
+#
+# Pulls in the per-component compose files via `include` (Compose v2.20+).
+# The `services:` block below layers depends_on/healthcheck wiring on top of
+# the included services so api waits for db to be healthy and for the
+# collector to be up before starting.
+#
+# Run only a piece:
+#   docker compose -f docker/db/docker-compose.yml up -d         # SQL Server only
+#   docker compose -f docker/honeycomb/docker-compose.yml up -d  # OTel collector only
+#   docker compose -f docker/app/docker-compose.yml up --build   # api + web only
+
+include:
+  - docker/db/docker-compose.yml
+  - docker/honeycomb/docker-compose.yml
+  - docker/app/docker-compose.yml
+
+services:
+  api:
+    depends_on:
+      db:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+
+  web:
+    depends_on:
+      - api

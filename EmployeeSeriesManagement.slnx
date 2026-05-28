@@ -1,0 +1,12 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/EmployeeSeriesManagement.Api/EmployeeSeriesManagement.Api.csproj" />
+    <Project Path="src/EmployeeSeriesManagement.Application/EmployeeSeriesManagement.Application.csproj" />
+    <Project Path="src/EmployeeSeriesManagement.Domain/EmployeeSeriesManagement.Domain.csproj" />
+    <Project Path="src/EmployeeSeriesManagement.Infrastructure/EmployeeSeriesManagement.Infrastructure.csproj" />
+    <Project Path="src/EmployeeSeriesManagement.Web/EmployeeSeriesManagement.Web.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/EmployeeSeriesManagement.Tests/EmployeeSeriesManagement.Tests.csproj" />
+  </Folder>
+</Solution>

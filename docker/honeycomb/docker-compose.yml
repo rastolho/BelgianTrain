@@ -1,0 +1,30 @@
+# OpenTelemetry Collector that forwards OTLP traces to Honeycomb cloud.
+#
+# Standalone:
+#   docker compose -f docker/honeycomb/docker-compose.yml up -d
+#
+# Requires HONEYCOMB_API_KEY in .env at the repo root.
+# Without a key the collector still runs and prints incoming spans via the
+# `debug` exporter — useful for verifying the pipeline.
+
+services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.115.1
+    container_name: esm-otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otel/config.yaml"]
+    volumes:
+      - ./collector-config.yaml:/etc/otel/config.yaml:ro
+    environment:
+      HONEYCOMB_API_KEY: ${HONEYCOMB_API_KEY:-}
+      HONEYCOMB_DATASET: ${HONEYCOMB_DATASET:-}
+    ports:
+      - "4317:4317"   # OTLP gRPC (used by API)
+      - "4318:4318"   # OTLP HTTP (optional)
+      - "13133:13133" # health_check extension
+    networks:
+      - esm-net
+
+networks:
+  esm-net:
+    name: esm-net

@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk.BlazorWebAssembly">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Debug'">
+    <!-- .NET 10 Blazor WASM fingerprints assemblies but not PDBs, so the debugger
+         asks for a fingerprinted PDB that doesn't exist → 404 first-chance exception.
+         Disable fingerprinting in Debug to silence it; Release still gets cache busting. -->
+    <WasmFingerprintAssets>false</WasmFingerprintAssets>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly" Version="10.0.8" />
+    <PackageReference Include="Microsoft.AspNetCore.Components.WebAssembly.DevServer" Version="10.0.8" PrivateAssets="all" />
+    <PackageReference Include="MudBlazor" Version="9.5.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EmployeeSeriesManagement.Application\EmployeeSeriesManagement.Application.csproj" />
+  </ItemGroup>
+
+</Project>
