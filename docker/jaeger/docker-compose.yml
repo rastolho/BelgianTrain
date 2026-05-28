@@ -1,0 +1,25 @@
+# Jaeger all-in-one — local trace UI.
+#
+# Standalone:
+#   docker compose -f docker/jaeger/docker-compose.yml up -d
+#   open http://localhost:16686
+#
+# The OTel Collector (docker/otel-collector/) forwards spans to jaeger:4317 over
+# the shared esm-net network. Jaeger's OTLP receivers are not exposed to the host
+# to avoid port conflicts with the collector — only the UI is reachable from outside.
+
+services:
+  jaeger:
+    image: jaegertracing/all-in-one:1.62.0
+    container_name: esm-jaeger
+    restart: unless-stopped
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"   # Jaeger UI
+    networks:
+      - esm-net
+
+networks:
+  esm-net:
+    name: esm-net

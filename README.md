@@ -15,91 +15,183 @@ Evaluation solution for SNCB (Belgian Train) implementing the provided ERD with 
 
 ## Prerequisites
 
-- [.NET 10 SDK](https://dotnet.microsoft.com/download) (or .NET 9+ with EF Core 9 packages if you retarget)
+- **Docker Desktop** (or Docker Engine + Compose v2.20+ for `include:` support).
+- Optional, only for `dotnet run` / `dotnet test`: [.NET 10 SDK](https://dotnet.microsoft.com/download).
 
-## Run with Docker (recommended)
+Tests use **Testcontainers**, which spins up a SQL Server image — Docker must be running even if you choose to run the apps natively.
 
-The compose stack is split into one file per component, plus a root file that includes them all. Pick the granularity you need.
+---
 
-### Run everything (one command)
+## Run locally — full stack in Docker (recommended)
+
+The whole solution (frontend + backend + database + OpenTelemetry collector + Jaeger UI) comes up with one command.
+
+### 1. Clone and create `.env`
+
+```bash
+git clone https://github.com/rastolho/BelgianTrain.git
+cd BelgianTrain
+```
+
+Create a `.env` file at the repo root (gitignored):
+
+```
+MSSQL_SA_PASSWORD=Dev!Strong@Password123
+```
+
+This password is read by both the `db` container (SA password) and the `api` container (connection string).
+
+### 2. Bring up the stack
 
 ```bash
 docker compose up --build
 ```
 
-Open **http://localhost:8080**. The `web` service (nginx) serves the published Blazor WASM at `/` and reverse-proxies `/api/*` to the API container over the compose network — single host port, no CORS. The API exports OpenTelemetry traces to the collector, which forwards them to Honeycomb (if `HONEYCOMB_API_KEY` is set in `.env`).
+First run builds the API and Web images (~1–2 minutes), pulls SQL Server, OTel Collector, and Jaeger images, then starts everything. The API waits for the DB healthcheck before starting, then auto-applies EF Core migrations and seeds demo data (3 employees, Brussels + Antwerp work addresses, sample series).
 
-### Run a single component
+Add `-d` to detach. To rebuild only after code changes: `docker compose up --build -d`.
+
+### 3. URLs
+
+Everything you need is on **localhost**:
+
+| URL | What it is | Used for |
+|-----|------------|----------|
+| **http://localhost:8080** | Blazor WASM UI (served by nginx) | Open this in the browser — the main app |
+| **http://localhost:8080/api/...** | REST API (proxied through nginx to the API container) | Same origin as the UI, no CORS |
+| **http://localhost:16686** | Jaeger UI | Inspect every request's trace waterfall |
+| **localhost:1433** | SQL Server | Connect with SSMS / Azure Data Studio / `sqlcmd` (user `sa`, password from `.env`) |
+| **http://localhost:13133** | OTel Collector health | `curl` returns 200 OK when collector is ready |
+| **localhost:4317 / 4318** | OTel Collector OTLP receivers | Only needed if you point a native `dotnet run` API at the collector — see below |
+
+The API container's port `8080` is **not** exposed directly. All API traffic from outside the docker network goes through nginx (`web` service) on `localhost:8080`, which proxies `/api/*` to the API container. Same origin → no CORS configuration in the browser.
+
+### 4. First steps in the UI
+
+1. Open **http://localhost:8080** → home page (`/personal-addresses`) loads with an empty work-city dropdown.
+2. Click the dropdown → pick **Brussels** → table shows the two employees (Dupont, Janssens) whose office is in Brussels, with their home addresses (Ixelles, Schaerbeek).
+3. Use the left nav to try the other pages:
+   - **Employee addresses** — enter `1001` to see both work + personal addresses for that employee.
+   - **Employee series** — enter `1001`, pick a date range, see series assigned in that period.
+   - **Assign series (internal)** — POST form for the back-office endpoint; try `employeeId=1002`, `seriesCode=501`, any future date range.
+
+### 5. Inspecting traces
+
+Open **http://localhost:16686**:
+
+1. In the *Service* dropdown pick **`EmployeeSeriesManagement.Api`**.
+2. Click **Find Traces**.
+3. Click any trace to see the span waterfall:
+   ```
+   GET api/Employees/{id}/addresses   ← ASP.NET Core (root, http.* tags)
+     └─ EmployeeService.GetEmployeeAddresses          ← Application layer (app.outcome, app.result.count)
+        └─ EmployeeRepository.EmployeeExists          ← Infrastructure layer
+        └─ EmployeeRepository.GetEmployeeAddresses
+           └─ Microsoft.Data.SqlClient.Execute        ← SQL command auto-instrumented
+   ```
+4. Click any span → side panel shows all custom tags (`app.employee.external_id`, `app.series.code`, `app.work_city`, `app.period.start/end`, `app.result.count`, `app.outcome=ok|not_found|conflict|validation_error|created`).
+
+You can also tail span counts in the collector logs without opening the UI:
 
 ```bash
-docker compose -f docker/db/docker-compose.yml         up -d   # SQL Server only
-docker compose -f docker/honeycomb/docker-compose.yml  up -d   # OTel collector only
-docker compose -f docker/app/docker-compose.yml        up --build  # api + web only (assumes db + collector reachable)
+docker compose logs -f otel-collector
 ```
 
-All sub-composes attach to the same named network (`esm-net`), so any combination works. You can chain files when you want a custom subset:
+### 6. Sanity check via curl
 
 ```bash
-# DB + app, no Honeycomb collector
+curl http://localhost:8080/api/employees/work-cities
+# → ["Antwerp","Brussels"]
+
+curl http://localhost:8080/api/employees/1001/addresses
+# → [{"id":1,"addressType":"Work","city":"Brussels",...}, {"id":3,"addressType":"Personal","city":"Ixelles",...}]
+
+curl "http://localhost:8080/api/employees/personal-addresses?workCity=Brussels"
+# → 2 employees (Dupont/Ixelles, Janssens/Schaerbeek)
+
+curl -X POST http://localhost:8080/api/employees/1002/series \
+  -H "Content-Type: application/json" \
+  -d '{"seriesCode":501,"startDate":"2026-04-15","endDate":"2026-05-15"}'
+# → 201 Created
+```
+
+Each call produces a fresh trace in Jaeger.
+
+### 7. Stop / cleanup
+
+```bash
+docker compose down       # stop containers, keep SQL data volume
+docker compose down -v    # stop and wipe the SQL volume (next `up` re-seeds)
+```
+
+---
+
+## Run one component at a time
+
+The compose stack is split into one file per component, joined by the root `docker-compose.yml` via `include:` (Compose v2.20+). You can run any subset:
+
+```bash
+docker compose -f docker/db/docker-compose.yml             up -d  # SQL Server only — localhost:1433
+docker compose -f docker/otel-collector/docker-compose.yml up -d  # Collector only — localhost:4317/4318/13133
+docker compose -f docker/jaeger/docker-compose.yml         up -d  # Jaeger UI only — localhost:16686
+docker compose -f docker/app/docker-compose.yml            up --build  # api + web only — localhost:8080
+```
+
+All sub-composes attach to the same named network (`esm-net`), so any combination works. Chain `-f` flags for a custom subset:
+
+```bash
+# DB + app, no tracing
 docker compose -f docker/db/docker-compose.yml -f docker/app/docker-compose.yml up --build
 ```
 
-### Layout
+### File layout
 
 | File | Services |
 |------|----------|
-| [docker-compose.yml](docker-compose.yml) | `include:` of the three below + `depends_on` wiring |
+| [docker-compose.yml](docker-compose.yml) | `include:` of the four below + `depends_on` wiring |
 | [docker/db/docker-compose.yml](docker/db/docker-compose.yml) | `db` (SQL Server 2022, volume `mssql-data`, host port 1433) |
-| [docker/honeycomb/docker-compose.yml](docker/honeycomb/docker-compose.yml) | `otel-collector` (OTLP gRPC `:4317`, OTLP HTTP `:4318`, health `:13133`) |
+| [docker/otel-collector/docker-compose.yml](docker/otel-collector/docker-compose.yml) | `otel-collector` (OTLP gRPC `:4317`, OTLP HTTP `:4318`, health `:13133`) |
+| [docker/jaeger/docker-compose.yml](docker/jaeger/docker-compose.yml) | `jaeger` all-in-one (UI on host port `:16686`) |
 | [docker/app/docker-compose.yml](docker/app/docker-compose.yml) | `api` (ASP.NET Core, container port 8080) + `web` (nginx, host port 8080) |
-| [docker/honeycomb/collector-config.yaml](docker/honeycomb/collector-config.yaml) | Collector pipeline: OTLP receiver → batch → Honeycomb exporter |
+| [docker/otel-collector/collector-config.yaml](docker/otel-collector/collector-config.yaml) | Collector pipeline: OTLP receiver → batch → Jaeger + debug |
 
-### Environment
+---
 
-Compose reads variables from `.env` at the repo root (gitignored). Create it with:
+## Run the .NET apps natively (debugger attached), DB in Docker
 
-```
-MSSQL_SA_PASSWORD=Dev!Strong@Password123
-HONEYCOMB_API_KEY=hcaik_xxx...   # leave empty to skip Honeycomb export
-HONEYCOMB_DATASET=                # Honeycomb Classic only
-```
-
-### Common ops
-
-- `docker compose down` — stop containers, **keep** the SQL Server volume.
-- `docker compose down -v` — stop and **wipe** the volume; next `up` re-applies migrations and re-seeds.
-- `docker compose logs -f api` — tail API logs.
-- `docker compose logs -f otel-collector` — see incoming spans (the collector's `debug` exporter prints to stdout).
-
-Requires Docker Desktop / Docker Engine with Compose v2.20+ (for `include:` support).
-
-## Run the .NET apps natively, DB in Docker
-
-If you'd rather run the API and the Blazor app via `dotnet run` (faster inner loop, debugger attaches directly), keep just the database in a container:
+If you'd rather run the API and the Blazor app via `dotnet run` for a faster inner loop / Visual Studio debugger, keep just the database (and optionally the tracing stack) in containers:
 
 ```bash
-docker compose up -d db          # only the SQL Server service, exposed on localhost:1433
+docker compose -f docker/db/docker-compose.yml             up -d  # SQL Server → localhost:1433
+docker compose -f docker/otel-collector/docker-compose.yml up -d  # optional — only if you want traces
+docker compose -f docker/jaeger/docker-compose.yml         up -d  # optional — only if you want Jaeger UI
 ```
 
-The existing compose already publishes `1433:1433` and the API's [appsettings.json](src/EmployeeSeriesManagement.Api/appsettings.json) connection string already targets `localhost,1433`, so no extra config is needed. Then in two terminals:
+Then in two terminals:
 
-**Terminal 1 – API**
+**Terminal 1 — API**
 
 ```bash
 cd src/EmployeeSeriesManagement.Api
 dotnet run
 ```
 
-API: `https://localhost:7280`. Migrations + demo seed run automatically against the SQL Server container on first start.
+- API URL: **https://localhost:7280** (also **http://localhost:5280**).
+- Migrations + demo seed run automatically against the SQL Server container on first start.
+- Sends OTLP to `http://localhost:4317` (configured in [appsettings.Development.json](src/EmployeeSeriesManagement.Api/appsettings.Development.json)); if the collector isn't running you get harmless warnings in the API logs, otherwise traces flow into Jaeger.
 
-**Terminal 2 – Blazor UI**
+**Terminal 2 — Blazor UI**
 
 ```bash
 cd src/EmployeeSeriesManagement.Web
 dotnet run
 ```
 
-Open the URL shown in the console (typically `https://localhost:7xxx`). Use the **Work city** dropdown; **Brussels** is pre-selected and shows two employees’ personal addresses.
+- UI URL: **https://localhost:7231**.
+- It calls the native API on `https://localhost:7280` (configured in [wwwroot/appsettings.json](src/EmployeeSeriesManagement.Web/wwwroot/appsettings.json)).
+- Jaeger UI (if running): **http://localhost:16686**.
+
+> **HTTPS dev certificate**: if it's your first time running an ASP.NET Core app, run `dotnet dev-certs https --trust` once.
 
 ## REST endpoints
 
@@ -142,7 +234,7 @@ dotnet test
 
 Structured logging via `ILogger<T>` in the API controller and `EmployeeService` (Information for operations, Warning for not-found).
 
-## Observability — OpenTelemetry → Honeycomb
+## Observability — OpenTelemetry → Jaeger
 
 The API emits OpenTelemetry traces with three layers of spans per request:
 
@@ -152,32 +244,21 @@ The API emits OpenTelemetry traces with three layers of spans per request:
 
 Custom `ActivitySource`s: `EmployeeSeriesManagement.Application`, `EmployeeSeriesManagement.Infrastructure` ([ApplicationTelemetry.cs](src/EmployeeSeriesManagement.Application/Diagnostics/ApplicationTelemetry.cs), [InfrastructureTelemetry.cs](src/EmployeeSeriesManagement.Infrastructure/Diagnostics/InfrastructureTelemetry.cs)). Pipeline wired in [Program.cs](src/EmployeeSeriesManagement.Api/Program.cs).
 
-### Local pipeline to Honeycomb
+### Visualizing traces
 
-Honeycomb itself is SaaS — there is no self-hosted backend image. The repo ships an **OpenTelemetry Collector** container ([docker/honeycomb/docker-compose.yml](docker/honeycomb/docker-compose.yml), config in [docker/honeycomb/collector-config.yaml](docker/honeycomb/collector-config.yaml)) that receives OTLP from the API and forwards it to `api.honeycomb.io`.
+API → OTLP gRPC → `otel-collector` (batch + memory limiter) → Jaeger (UI on `:16686`) and `debug` exporter (stdout).
 
-**One-time setup:**
+Open **http://localhost:16686**, pick `EmployeeSeriesManagement.Api` from the *Service* dropdown, click *Find Traces*. Click any trace to see the waterfall with the `HTTP → Service → Repository → SQL` hierarchy and all `app.*` tags.
 
-1. Grab a Honeycomb ingest key from https://ui.honeycomb.io → Account → Team settings → API keys.
-2. Add `HONEYCOMB_API_KEY=...` to `.env` at the repo root (`.env` is gitignored).
-
-**Run only the collector** (e.g. when the API runs natively via `dotnet run`):
+The collector also writes span counts to stdout via the `debug` exporter — useful to verify the pipeline without opening the UI:
 
 ```bash
-docker compose -f docker/honeycomb/docker-compose.yml up -d
+docker compose logs -f otel-collector
 ```
 
-The API picks up `OpenTelemetry:OtlpEndpoint=http://localhost:4317` from [appsettings.Development.json](src/EmployeeSeriesManagement.Api/appsettings.Development.json) (native `dotnet run`) or the `OpenTelemetry__OtlpEndpoint=http://otel-collector:4317` env var (Docker). Spans land in your Honeycomb workspace under a dataset named after the resource's `service.name` (`EmployeeSeriesManagement.Api`).
+### Swapping the backend
 
-Without an API key, the collector still runs but Honeycomb export returns 401; the `debug` exporter inside the collector logs incoming spans to stdout so you can verify the pipeline. View with `docker compose logs -f otel-collector`.
-
-### Without Honeycomb
-
-If you don't have a Honeycomb account, three options:
-
-- **Console exporter only** — set `OpenTelemetry__OtlpEndpoint=` (empty) and the API prints spans to stdout. Already enabled in Development.
-- **Swap the collector exporter** for `jaeger` / `zipkin` / `prometheus` by editing [docker/honeycomb/collector-config.yaml](docker/honeycomb/collector-config.yaml) — same receiver, different downstream.
-- **.NET Aspire dashboard** — point `OpenTelemetry__OtlpEndpoint` directly at it (`http://localhost:18889`) and skip the collector entirely.
+The collector layer means you can switch to a different trace backend without touching the API. Edit [docker/otel-collector/collector-config.yaml](docker/otel-collector/collector-config.yaml) and replace the `otlp/jaeger` exporter with any of `otlphttp` / `zipkin` / `prometheus` / vendor-specific exporters. Same OTLP receiver, different downstream.
 
 ## Security approach (design notes)
 

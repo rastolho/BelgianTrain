@@ -8,13 +8,15 @@
 # collector to be up before starting.
 #
 # Run only a piece:
-#   docker compose -f docker/db/docker-compose.yml up -d         # SQL Server only
-#   docker compose -f docker/honeycomb/docker-compose.yml up -d  # OTel collector only
-#   docker compose -f docker/app/docker-compose.yml up --build   # api + web only
+#   docker compose -f docker/db/docker-compose.yml up -d             # SQL Server only
+#   docker compose -f docker/otel-collector/docker-compose.yml up -d # OTel collector only
+#   docker compose -f docker/jaeger/docker-compose.yml up -d         # Jaeger UI only
+#   docker compose -f docker/app/docker-compose.yml up --build       # api + web only
 
 include:
   - docker/db/docker-compose.yml
-  - docker/honeycomb/docker-compose.yml
+  - docker/otel-collector/docker-compose.yml
+  - docker/jaeger/docker-compose.yml
   - docker/app/docker-compose.yml
 
 services:
@@ -24,6 +26,10 @@ services:
         condition: service_healthy
       otel-collector:
         condition: service_started
+
+  otel-collector:
+    depends_on:
+      - jaeger
 
   web:
     depends_on:

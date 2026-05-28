@@ -3,7 +3,7 @@
 # Standalone (requires db + otel-collector running and reachable on esm-net):
 #   docker network inspect esm-net >/dev/null 2>&1 || docker network create esm-net
 #   docker compose -f docker/db/docker-compose.yml up -d
-#   docker compose -f docker/honeycomb/docker-compose.yml up -d
+#   docker compose -f docker/otel-collector/docker-compose.yml up -d
 #   docker compose -f docker/app/docker-compose.yml up --build
 #
 # Easier: from repo root, `docker compose up --build` runs everything via include.

@@ -1,12 +1,9 @@
 # OpenTelemetry Collector configuration: receive OTLP from the API,
-# batch, and forward to Honeycomb cloud.
+# batch, and forward to Jaeger over the docker network. The `debug` exporter
+# also logs span counts to stdout so the pipeline can be verified without a UI.
 #
-# Honeycomb routes incoming traces by `service.name` resource attribute.
-# The API sets service.name=EmployeeSeriesManagement.Api (see Program.cs),
-# so spans land in a dataset/environment of that name in your Honeycomb workspace.
-#
-# For Honeycomb Classic environments (legacy), uncomment x-honeycomb-dataset
-# and set HONEYCOMB_DATASET in .env.
+# Jaeger groups traces by `service.name` resource attribute; the API sets
+# service.name=EmployeeSeriesManagement.Api (see Program.cs).
 
 receivers:
   otlp:
@@ -28,10 +25,10 @@ processors:
     spike_limit_percentage: 25
 
 exporters:
-  otlp/honeycomb:
-    endpoint: api.honeycomb.io:443
-    headers:
-      x-honeycomb-team: ${env:HONEYCOMB_API_KEY}
+  otlp/jaeger:
+    endpoint: jaeger:4317
+    tls:
+      insecure: true
 
   debug:
     verbosity: normal
@@ -48,7 +45,7 @@ service:
     traces:
       receivers: [otlp]
       processors: [memory_limiter, batch]
-      exporters: [otlp/honeycomb, debug]
+      exporters: [otlp/jaeger, debug]
   telemetry:
     logs:
       level: info

@@ -1,11 +1,8 @@
-# OpenTelemetry Collector that forwards OTLP traces to Honeycomb cloud.
+# OpenTelemetry Collector — receives OTLP from the API, batches, and forwards
+# to Jaeger (and to the `debug` exporter for stdout verification).
 #
 # Standalone:
-#   docker compose -f docker/honeycomb/docker-compose.yml up -d
-#
-# Requires HONEYCOMB_API_KEY in .env at the repo root.
-# Without a key the collector still runs and prints incoming spans via the
-# `debug` exporter — useful for verifying the pipeline.
+#   docker compose -f docker/otel-collector/docker-compose.yml up -d
 
 services:
   otel-collector:
@@ -15,9 +12,6 @@ services:
     command: ["--config=/etc/otel/config.yaml"]
     volumes:
       - ./collector-config.yaml:/etc/otel/config.yaml:ro
-    environment:
-      HONEYCOMB_API_KEY: ${HONEYCOMB_API_KEY:-}
-      HONEYCOMB_DATASET: ${HONEYCOMB_DATASET:-}
     ports:
       - "4317:4317"   # OTLP gRPC (used by API)
       - "4318:4318"   # OTLP HTTP (optional)
